@@ -12,13 +12,19 @@
 * Runs the setup on the database (db creation, schema, etc...)
 
 ```bash
-./setup.sh
+$ ./setup.sh
+```
+
+**If you are already running postgres with the `postgres` name, you can run the following to delete the poeboy database and set up.**
+
+```bash
+$ ./reset.sh
 ```
 
 ## Run
 
 ```bash
-python import.py
+$ python import.py
 ```
 
 ## TODO

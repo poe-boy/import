@@ -12,23 +12,23 @@ import data
 ARGS = sys.argv[1:]
 
 
-def get_next_change_id():
+def get_change_id():
     """
     Gets the next change id from poe.ninja or the database.
     """
 
-    next_change_id = None
+    change_id = None
 
     args_length = len(ARGS)
 
     if args_length > 0 and ARGS[0] == 'true':
         res = requests.get('http://poe.ninja/api/Data/GetStats')
 
-        next_change_id = res.json()['next_change_id']
+        change_id = res.json()['next_change_id']
     else:
-        next_change_id = data.get_next_change_id()
+        change_id = data.get_next_change_id()
 
-    return next_change_id
+    return change_id
 
 
 def request_stash_tabs(next_change_id=None):
@@ -61,9 +61,9 @@ def map_properties(property_list, prop_type):
             'value_type_2': p['values'][1][1] if has_2 is True else None,
             'display_mode': p['displayMode'],
             'type': prop_type,
-            'progress': p['progress'] if 'progress' in p else None,
-            'property_type': p['type'] if 'type' in p else None,
-            'is_additional': p['isAdditional'] if 'isAdditional' in p else None
+            'progress': p.get('progress', None),
+            'property_type': p.get('type', None),
+            'is_additional': p.get('isAdditional', None)
         }
 
         mapped_property_list.append(prop)
@@ -71,7 +71,7 @@ def map_properties(property_list, prop_type):
     return mapped_property_list
 
 
-def map_items(item_list):
+def map_items(item_list, stash_id):
     """
     Maps items.
     """
@@ -80,6 +80,8 @@ def map_items(item_list):
 
     for i in item_list:
         item = {
+            # our mapping property later
+            'stash_id': stash_id,
             'verified': i['verified'],
             'dimensions': {
                 'w': i['w'],
@@ -95,18 +97,18 @@ def map_items(item_list):
             'corrupted': i['corrupted'],
             'locked_to_character': i['lockedToCharacter'],
             'note': i['note'] if 'note' in i else None,
-            'explicit_mods': ''.join(i['explicitMods']) if 'explicitMods' in i else None,
-            'enchant_mods': ''.join(i['enchantMods']) if 'enchantMods' in i else None,
-            'crafted_mods': ''.join(i['craftedMods']) if 'craftedMods' in i else None,
-            'flavour_text': ''.join(i['flavourText']) if 'flavourText' in i else None,
+            'explicit_mods': ''.join(i.get('explicitMods', [])) or None,
+            'enchant_mods': ''.join(i.get('enchantMods', [])) or None,
+            'crafted_mods': ''.join(i.get('craftedMods', [])) or None,
+            'flavour_text': ''.join(i.get('flavourText', [])) or None,
             'frame_type': i['frameType'],
             'stash_position': {
                 'x': i['x'],
                 'y': i['y']
             },
             'inventory_id': i['inventoryId'],
-            'properties': map_properties(i['properties'], 'property') if 'properties' in i else [],
-            'requirements': map_properties(i['requirements'], 'requirement') if 'requirements' in i else []
+            'properties': map_properties(i.get('properties', []), 'property'),
+            'requirements': map_properties(i.get('requirements', []), 'requirement')
         }
 
         mapped_list.append(item)
@@ -121,52 +123,62 @@ def map_stash_data(stash_data):
 
     next_change_id = stash_data['next_change_id']
 
+    account_list = []
     stash_list = []
+    item_list = []
 
     for stash in stash_data['stashes']:
-        mapped_account = {
-            'name': stash['accountName'],
-            'last_character_name': stash['lastCharacterName']
-        }
+        # add unique accounts by `accountName`
+        if not any(a['name'] == stash['accountName'] for a in account_list):
+            account_list.append({
+                'name': stash['accountName'],
+                'last_character_name': stash['lastCharacterName']
+            })
 
-        mapped_stash = {
-            'account_id': None,
-            'stash_id': stash['id'],
-            'stash': stash['stash'],
-            'type': stash['stashType']
-        }
+        # add unique stashes by stash `id`
+        if not any(s['stash_id'] == stash['id'] for s in stash_list):
+            stash_list.append({
+                # our mapping property later
+                'account_name': stash['accountName'],
+                'stash_id': stash['id'],
+                'stash': stash['stash'],
+                'type': stash['stashType']
+            })
 
-        mapped_item_list = map_items(stash['items'])
+            item_list = map_items(stash['items'], stash['id'])
 
-        stash_list.append({
-            'account': mapped_account,
-            'stash': mapped_stash,
-            'item_list': mapped_item_list
-        })
-
-    return next_change_id, stash_list
+    return {
+        'account_list': account_list,
+        'stash_list': stash_list,
+        'item_list': item_list
+    }
 
 
-def main(next_change_id=None):
+def main(change_id=None):
     """
     Return the pathname of the KOS root directory.
     """
 
-    if next_change_id is None:
-        next_change_id = get_next_change_id()
+    if change_id is None:
+        change_id = get_change_id()
 
-    print('processing change id:', next_change_id or 'first')
+    print('processing change id:', change_id or 'first')
 
-    stash_data = request_stash_tabs(next_change_id)
+    response = request_stash_tabs(change_id)
 
-    mapped = map_stash_data(stash_data)
+    next_change_id = response['next_change_id']
 
-    if next_change_id is not None:
+    # before we do anything,
+    if change_id == next_change_id:
+        print('change id is identical')
+        threading.Timer(5, main, [next_change_id]).start()
+    else:
+        mapped = map_stash_data(response)
+
+        print('updating next change id')
         data.update_next_change_id(next_change_id)
 
-    # if returned next change id doesn't match the one we started with, run again
-    if next_change_id != mapped[0]:
-        threading.Timer(5, main, [mapped[0]]).start()
+        threading.Timer(5, main, [next_change_id]).start()
 
 
 if __name__ == '__main__':
