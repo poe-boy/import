@@ -156,7 +156,7 @@ def map_stash_data(stash_data):
 
 def main(change_id=None):
     """
-    Return the pathname of the KOS root directory.
+    Main process.
     """
 
     if change_id is None:
